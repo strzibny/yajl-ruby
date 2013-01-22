@@ -36,7 +36,7 @@
 static void yajl_check_and_fire_callback(void * ctx) {
     yajl_parser_wrapper * wrapper;
     GetParser((VALUE)ctx, wrapper);
-
+    
     /* No need to do any of this if the callback isn't even setup */
     if (wrapper->parse_complete_callback != Qnil) {
         int len = RARRAY_LEN(wrapper->builderStack);
@@ -96,10 +96,10 @@ static void yajl_encoder_wrapper_free(void * wrapper) {
     yajl_encoder_wrapper * w = wrapper;
     if (w) {
         if (w->indentString) {
-          xfree(w->indentString);
+          free(w->indentString);
         }
         yajl_gen_free(w->encoder);
-        xfree(w);
+        free(w);
     }
 }
 
@@ -118,7 +118,7 @@ void yajl_encode_part(void * wrapper, VALUE obj, VALUE io) {
     int idx = 0;
     const unsigned char * buffer;
     const char * cptr;
-    unsigned int len;
+    size_t len;
     VALUE keys, entry, keyStr;
 
     if (io != Qnil || w->on_progress_callback != Qnil) {
@@ -206,7 +206,7 @@ void yajl_parser_wrapper_free(void * wrapper) {
     yajl_parser_wrapper * w = wrapper;
     if (w) {
         yajl_free(w->parser);
-        xfree(w);
+        free(w);
     }
 }
 
@@ -218,12 +218,13 @@ void yajl_parser_wrapper_mark(void * wrapper) {
     }
 }
 
-void yajl_parse_chunk(const unsigned char * chunk, unsigned int len, yajl_handle parser) {
+void yajl_parse_chunk(const unsigned char * chunk, size_t len, yajl_handle parser) {
     yajl_status stat;
-
+    yajl_handle hand = parser;
+    
     stat = yajl_parse(parser, chunk, len);
-
-    if (stat != yajl_status_ok && stat != yajl_status_insufficient_data) {
+    
+    if (stat != yajl_status_ok) {
         unsigned char * str = yajl_get_error(parser, 1, chunk, len);
         VALUE errobj = rb_exc_new2(cParseError, (const char*) str);
         yajl_free_error(parser, str);
@@ -244,7 +245,7 @@ static int yajl_found_boolean(void * ctx, int boolean) {
     return 1;
 }
 
-static int yajl_found_number(void * ctx, const char * numberVal, unsigned int numberLen) {
+static int yajl_found_number(void * ctx, const char * numberVal, size_t numberLen) {
     char buf[numberLen+1];
     buf[numberLen] = 0;
     memcpy(buf, numberVal, numberLen);
@@ -259,7 +260,7 @@ static int yajl_found_number(void * ctx, const char * numberVal, unsigned int nu
     return 1;
 }
 
-static int yajl_found_string(void * ctx, const unsigned char * stringVal, unsigned int stringLen) {
+static int yajl_found_string(void * ctx, const unsigned char * stringVal, size_t stringLen) {
     VALUE str = rb_str_new((const char *)stringVal, stringLen);
 #ifdef HAVE_RUBY_ENCODING_H
     rb_encoding *default_internal_enc = rb_default_internal_encoding();
@@ -273,7 +274,7 @@ static int yajl_found_string(void * ctx, const unsigned char * stringVal, unsign
     return 1;
 }
 
-static int yajl_found_hash_key(void * ctx, const unsigned char * stringVal, unsigned int stringLen) {
+static int yajl_found_hash_key(void * ctx, const unsigned char * stringVal, size_t stringLen) {
     yajl_parser_wrapper * wrapper;
     VALUE keyStr;
 #ifdef HAVE_RUBY_ENCODING_H
@@ -370,7 +371,6 @@ static int yajl_found_end_array(void * ctx) {
  */
 static VALUE rb_yajl_parser_new(int argc, VALUE * argv, VALUE klass) {
     yajl_parser_wrapper * wrapper;
-    yajl_parser_config cfg;
     VALUE opts, obj;
     int allowComments = 1, checkUTF8 = 1, symbolizeKeys = 0;
 
@@ -388,10 +388,13 @@ static VALUE rb_yajl_parser_new(int argc, VALUE * argv, VALUE klass) {
             symbolizeKeys = 1;
         }
     }
-    cfg = (yajl_parser_config){allowComments, checkUTF8};
-
+    
     obj = Data_Make_Struct(klass, yajl_parser_wrapper, yajl_parser_wrapper_mark, yajl_parser_wrapper_free, wrapper);
-    wrapper->parser = yajl_alloc(&callbacks, &cfg, NULL, (void *)obj);
+    yajl_handle p = yajl_alloc(&callbacks, NULL, (void *)obj);
+    yajl_config(p, yajl_allow_comments, allowComments);
+    yajl_config(p, yajl_dont_validate_strings, !checkUTF8);
+
+    wrapper->parser = p;
     wrapper->nestedArrayLevel = 0;
     wrapper->nestedHashLevel = 0;
     wrapper->objectsFound = 0;
@@ -442,9 +445,8 @@ static VALUE rb_yajl_parser_parse(int argc, VALUE * argv, VALUE self) {
     yajl_status stat;
     yajl_parser_wrapper * wrapper;
     VALUE rbufsize, input, blk;
-    unsigned int len;
+    size_t len;
     const char * cptr;
-
     GetParser(self, wrapper);
 
     /* setup our parameters */
@@ -457,7 +459,7 @@ static VALUE rb_yajl_parser_parse(int argc, VALUE * argv, VALUE self) {
     if (!NIL_P(blk)) {
         rb_yajl_parser_set_complete_cb(self, blk);
     }
-
+    
     if (TYPE(input) == T_STRING) {
         cptr = RSTRING_PTR(input);
         len = RSTRING_LEN(input);
@@ -474,7 +476,7 @@ static VALUE rb_yajl_parser_parse(int argc, VALUE * argv, VALUE self) {
     }
 
     /* parse any remaining buffered data */
-    stat = yajl_parse_complete(wrapper->parser);
+    stat = yajl_complete_parse(wrapper->parser);
 
     if (wrapper->parse_complete_callback != Qnil) {
         yajl_check_and_fire_callback((void *)self);
@@ -497,13 +499,13 @@ static VALUE rb_yajl_parser_parse(int argc, VALUE * argv, VALUE self) {
  */
 static VALUE rb_yajl_parser_parse_chunk(VALUE self, VALUE chunk) {
     yajl_parser_wrapper * wrapper;
-    unsigned int len;
-
+    size_t len;
     GetParser(self, wrapper);
+    
     if (NIL_P(chunk)) {
         rb_raise(cParseError, "Can't parse a nil string.");
     }
-
+    
     if (wrapper->parse_complete_callback != Qnil) {
         const char * cptr = RSTRING_PTR(chunk);
         len = RSTRING_LEN(chunk);
@@ -556,12 +558,12 @@ static unsigned char * defaultIndentString = (unsigned char *)"  ";
   * the encoder will still pass it - I hope that makes sense ;).
  */
 static VALUE rb_yajl_encoder_new(int argc, VALUE * argv, VALUE klass) {
+    yajl_gen c; 
     yajl_encoder_wrapper * wrapper;
-    yajl_gen_config cfg;
     VALUE opts, obj, indent;
     unsigned char *indentString = NULL, *actualIndent = NULL;
     int beautify = 0, htmlSafe = 0;
-
+        
     /* Scan off config vars */
     if (rb_scan_args(argc, argv, "01", &opts) == 1) {
         Check_Type(opts, T_HASH);
@@ -569,12 +571,13 @@ static VALUE rb_yajl_encoder_new(int argc, VALUE * argv, VALUE klass) {
         if (rb_hash_aref(opts, sym_pretty) == Qtrue) {
             beautify = 1;
             indent = rb_hash_aref(opts, sym_indent);
+            
             if (indent != Qnil) {
 #ifdef HAVE_RUBY_ENCODING_H
                 indent = rb_str_export_to_enc(indent, utf8Encoding);
 #endif
                 Check_Type(indent, T_STRING);
-                indentString = (unsigned char*)xmalloc(RSTRING_LEN(indent)+1);
+                indentString = (unsigned char*)malloc(RSTRING_LEN(indent)+1);
                 memcpy(indentString, RSTRING_PTR(indent), RSTRING_LEN(indent));
                 indentString[RSTRING_LEN(indent)] = '\0';
                 actualIndent = indentString;
@@ -584,14 +587,19 @@ static VALUE rb_yajl_encoder_new(int argc, VALUE * argv, VALUE klass) {
           htmlSafe = 1;
         }
     }
+
     if (!indentString) {
       indentString = defaultIndentString;
     }
-    cfg = (yajl_gen_config){beautify, (const char *)indentString, htmlSafe};
+     
+    c = yajl_gen_alloc(NULL);  
+    yajl_gen_config(c, yajl_gen_beautify, beautify);  
+    yajl_gen_config(c, yajl_gen_indent_string, indentString); 
+    yajl_gen_config(c, yajl_gen_escape_solidus, htmlSafe); 
 
     obj = Data_Make_Struct(klass, yajl_encoder_wrapper, yajl_encoder_wrapper_mark, yajl_encoder_wrapper_free, wrapper);
-    wrapper->indentString = actualIndent;
-    wrapper->encoder = yajl_gen_alloc(&cfg, NULL);
+    
+    wrapper->encoder = c;
     wrapper->on_progress_callback = Qnil;
     if (opts != Qnil && rb_funcall(opts, intern_has_key, 1, sym_terminator) == Qtrue) {
         wrapper->terminator = rb_hash_aref(opts, sym_terminator);
@@ -603,6 +611,7 @@ static VALUE rb_yajl_encoder_new(int argc, VALUE * argv, VALUE klass) {
     } else {
         wrapper->terminator = 0;
     }
+    
     rb_obj_call_init(obj, 0, 0);
     return obj;
 }
@@ -645,9 +654,8 @@ static VALUE rb_yajl_encoder_init(int argc, VALUE * argv, VALUE self) {
 static VALUE rb_yajl_encoder_encode(int argc, VALUE * argv, VALUE self) {
     yajl_encoder_wrapper * wrapper;
     const unsigned char * buffer;
-    unsigned int len;
+    size_t len;
     VALUE obj, io, blk, outBuff;
-
     GetEncoder(self, wrapper);
 
     rb_scan_args(argc, argv, "11&", &obj, &io, &blk);
@@ -665,10 +673,10 @@ static VALUE rb_yajl_encoder_encode(int argc, VALUE * argv, VALUE self) {
 #ifdef HAVE_RUBY_ENCODING_H
     rb_enc_associate(outBuff, utf8Encoding);
 #endif
-    yajl_gen_clear(wrapper->encoder);
 
     if (io != Qnil) {
         rb_io_write(io, outBuff);
+
         if (wrapper->terminator != 0 && wrapper->terminator != Qnil) {
             rb_io_write(io, wrapper->terminator);
         }

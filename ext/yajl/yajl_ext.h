@@ -24,9 +24,9 @@
 #include <yajl/yajl_parse.h>
 #include <yajl/yajl_gen.h>
 
-/* tell rbx not to use it's caching compat layer
-   by doing this we're making a promize to RBX that
-   we'll never modify the pointers we get back from RSTRING_PTR */
+// tell rbx not to use it's caching compat layer
+// by doing this we're making a promize to RBX that
+// we'll never modify the pointers we get back from RSTRING_PTR
 #define RSTRING_NOT_MODIFIED
 
 #include <ruby.h>
@@ -58,19 +58,19 @@ static ID intern_io_read, intern_call, intern_keys, intern_to_s,
             intern_to_json, intern_has_key, intern_to_sym, intern_as_json;
 static ID sym_allow_comments, sym_check_utf8, sym_pretty, sym_indent, sym_terminator, sym_symbolize_keys, sym_symbolize_names, sym_html_safe;
 
-#define GetParser(obj, sval) Data_Get_Struct(obj, yajl_parser_wrapper, sval);
-#define GetEncoder(obj, sval) Data_Get_Struct(obj, yajl_encoder_wrapper, sval);
+#define GetParser(obj, sval) (sval = (yajl_parser_wrapper*)DATA_PTR(obj));
+#define GetEncoder(obj, sval) (sval = (yajl_encoder_wrapper*)DATA_PTR(obj));
 
 static void yajl_check_and_fire_callback(void * ctx);
 static void yajl_set_static_value(void * ctx, VALUE val);
-static void yajl_encode_part(void * wrapper, VALUE obj, VALUE io);
-static void yajl_parse_chunk(const unsigned char * chunk, unsigned int len, yajl_handle parser);
+void yajl_encode_part(void * wrapper, VALUE obj, VALUE io);
+void yajl_parse_chunk(const unsigned char * chunk, size_t len, yajl_handle parser);
 
 static int yajl_found_null(void * ctx);
 static int yajl_found_boolean(void * ctx, int boolean);
-static int yajl_found_number(void * ctx, const char * numberVal, unsigned int numberLen);
-static int yajl_found_string(void * ctx, const unsigned char * stringVal, unsigned int stringLen);
-static int yajl_found_hash_key(void * ctx, const unsigned char * stringVal, unsigned int stringLen);
+static int yajl_found_number(void * ctx, const char * numberVal, size_t numberLen);
+static int yajl_found_string(void * ctx, const unsigned char * stringVal, size_t stringLen);
+static int yajl_found_hash_key(void * ctx, const unsigned char * stringVal, size_t stringLen);
 static int yajl_found_start_hash(void * ctx);
 static int yajl_found_end_hash(void * ctx);
 static int yajl_found_start_array(void * ctx);
