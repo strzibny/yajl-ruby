@@ -21,8 +21,8 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-#include "api/yajl_parse.h"
-#include "api/yajl_gen.h"
+#include <yajl/yajl_parse.h>
+#include <yajl/yajl_gen.h>
 
 /* tell rbx not to use it's caching compat layer
    by doing this we're making a promize to RBX that
